@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify, request
 
@@ -22,7 +22,7 @@ def add_cors_headers(response):
 @app.route("/api/matches")
 def matches():
     sport = request.args.get("sport", "football")
-    date_str = request.args.get("date", datetime.utcnow().strftime("%Y-%m-%d"))
+    date_str = request.args.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     if sport not in ("football", "hockey"):
         return jsonify({"error": "sport має бути 'football' або 'hockey'"}), 400

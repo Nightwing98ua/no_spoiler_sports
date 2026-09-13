@@ -44,6 +44,14 @@ def fetch_football_games(date_str):
     resp.raise_for_status()
     data = resp.json()
 
+    # API-Football повертає HTTP 200 навіть коли вичерпано ліміт запитів —
+    # у такому разі помилка лежить у полі "errors", а "response" просто порожній.
+    # Без цієї перевірки сайт мовчки показував би "матчів немає" замість
+    # справжньої причини.
+    api_errors = data.get("errors")
+    if api_errors:
+        raise RuntimeError(f"API-Football повернув помилку: {api_errors}")
+
     games = []
 
     for m in data.get("response", []):
