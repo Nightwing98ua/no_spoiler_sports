@@ -1,127 +1,89 @@
 import time
 
 import requests
-from config import API_FOOTBALL_BASE_URL, API_FOOTBALL_KEY, ALLOWED_FOOTBALL_LEAGUES
-from scoring import football_score_with_stats, football_score_fallback
+from scoring import football_score_fallback
 
-HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
+# Неофіційне, але стабільне й багато років використовуване API ESPN.
+# Не потребує ключа й реєстрації.
+ESPN_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer"
 
-# Безкоштовний тариф дозволяє 10 запитів/хвилину.
-# 6.5 секунди між запитами тримає нас безпечно нижче цієї межі.
-_MIN_SECONDS_BETWEEN_REQUESTS = 6.5
-_last_request_time = 0.0
-
-
-def _throttle():
-    global _last_request_time
-    elapsed = time.time() - _last_request_time
-    wait = _MIN_SECONDS_BETWEEN_REQUESTS - elapsed
-    if wait > 0:
-        time.sleep(wait)
-    _last_request_time = time.time()
+# Код ліги ESPN -> назва для показу на сайті
+LEAGUES = {
+    "eng.1": "Premier League",
+    "esp.1": "La Liga",
+    "ita.1": "Serie A",
+    "ger.1": "Bundesliga",
+    "fra.1": "Ligue 1",
+    "uefa.champions": "Champions League",
+}
 
 
-def _safe_num(stat_dict, name):
-    val = stat_dict.get(name, 0)
-    if val is None:
-        return 0
-    if isinstance(val, str):
-        val = val.replace("%", "")
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _fetch_fixture_stats(fixture_id):
-    _throttle()
-    resp = requests.get(
-        f"{API_FOOTBALL_BASE_URL}/fixtures/statistics",
-        headers=HEADERS,
-        params={"fixture": fixture_id},
-        timeout=10,
-    )
+def _fetch_league_scoreboard(league_code, date_str_espn):
+    url = f"{ESPN_BASE_URL}/{league_code}/scoreboard"
+    resp = requests.get(url, params={"dates": date_str_espn}, timeout=10)
     resp.raise_for_status()
-    return resp.json().get("response", [])
+    return resp.json()
 
 
 def fetch_football_games(date_str):
     """
     date_str: "YYYY-MM-DD"
-    Робить 1 запит на список матчів дня + по 1 запиту статистики
-    ЛИШЕ для завершених матчів (щоб не витрачати денний ліміт
-    на матчі, що ще не почались чи йдуть наживо).
+
+    ESPN не дає детальної статистики (удари, xG) через цей ендпоінт,
+    тому оцінка рахується спрощено — за голами й різницею рахунку,
+    так само як для матчів без статистики раніше.
     """
-    _throttle()
-    resp = requests.get(
-        f"{API_FOOTBALL_BASE_URL}/fixtures",
-        headers=HEADERS,
-        params={"date": date_str},
-        timeout=10,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-
-    # API-Football повертає HTTP 200 навіть коли вичерпано ліміт запитів —
-    # у такому разі помилка лежить у полі "errors", а "response" просто порожній.
-    # Без цієї перевірки сайт мовчки показував би "матчів немає" замість
-    # справжньої причини.
-    api_errors = data.get("errors")
-    if api_errors:
-        raise RuntimeError(f"API-Football повернув помилку: {api_errors}")
-
+    date_str_espn = date_str.replace("-", "")  # ESPN хоче формат YYYYMMDD
     games = []
 
-    for m in data.get("response", []):
-        if m["league"]["id"] not in ALLOWED_FOOTBALL_LEAGUES:
+    for league_code, league_name in LEAGUES.items():
+        try:
+            data = _fetch_league_scoreboard(league_code, date_str_espn)
+        except requests.RequestException:
+            # Якщо одна ліга тимчасово недоступна — не валимо весь запит,
+            # просто пропускаємо її для цього дня.
             continue
 
-        fixture_id = m["fixture"]["id"]
-        status = m["fixture"]["status"]["short"]  # напр. "FT", "NS", "1H"
-        finished = status == "FT"
+        for event in data.get("events", []):
+            status = event.get("status", {}).get("type", {})
+            finished = bool(status.get("completed"))
 
-        home = m["teams"]["home"]["name"]
-        away = m["teams"]["away"]["name"]
-        gh = m["goals"]["home"] or 0
-        ga = m["goals"]["away"] or 0
+            competitions = event.get("competitions", [])
+            if not competitions:
+                continue
+            competitors = competitions[0].get("competitors", [])
 
-        rating = None
-        stats_payload = {}
+            home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+            away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+            if not home or not away:
+                continue
 
-        if finished:
-            stats_resp = _fetch_fixture_stats(fixture_id)
+            home_name = home.get("team", {}).get("displayName", "")
+            away_name = away.get("team", {}).get("displayName", "")
 
-            if stats_resp:
-                home_stats, away_stats = {}, {}
-                for team in stats_resp:
-                    values = {s["type"]: s["value"] for s in team["statistics"]}
-                    if team["team"]["name"] == home:
-                        home_stats = values
-                    else:
-                        away_stats = values
+            try:
+                gh = int(home.get("score", 0) or 0)
+                ga = int(away.get("score", 0) or 0)
+            except (TypeError, ValueError):
+                gh, ga = 0, 0
 
-                shots = _safe_num(home_stats, "Total Shots") + _safe_num(away_stats, "Total Shots")
-                xg = _safe_num(home_stats, "Expected Goals") + _safe_num(away_stats, "Expected Goals")
-                fouls = _safe_num(home_stats, "Fouls") + _safe_num(away_stats, "Fouls")
+            rating = football_score_fallback(gh, ga) if finished else None
 
-                rating = football_score_with_stats(gh, ga, shots, xg, fouls)
-                stats_payload = {"shots_total": shots, "xg_total": xg, "fouls_total": fouls}
-            else:
-                rating = football_score_fallback(gh, ga)
+            games.append({
+                "id": f"fb-{event.get('id')}",
+                "sport": "football",
+                "date": date_str,
+                "league": league_name,
+                "status": status.get("name", ""),
+                "finished": finished,
+                "home": home_name,
+                "away": away_name,
+                "score_home": gh,
+                "score_away": ga,
+                "rating": rating,
+                "stats": {},
+            })
 
-        games.append({
-            "id": f"fb-{fixture_id}",
-            "sport": "football",
-            "date": date_str,
-            "league": m["league"]["name"],
-            "status": status,
-            "finished": finished,
-            "home": home,
-            "away": away,
-            "score_home": gh,
-            "score_away": ga,
-            "rating": rating,
-            "stats": stats_payload,
-        })
+        time.sleep(0.3)  # ввічлива пауза між запитами до різних ліг
 
     return games
