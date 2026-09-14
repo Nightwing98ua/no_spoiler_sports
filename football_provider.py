@@ -1,7 +1,8 @@
 import time
 
 import requests
-from scoring import football_score_fallback
+from scoring import football_score_fallback, football_score_with_xg, football_score_with_stats
+from understat_provider import get_understat_match, get_shots_for_match
 
 # Неофіційне, але стабільне й багато років використовуване API ESPN.
 # Не потребує ключа й реєстрації.
@@ -68,6 +69,25 @@ def fetch_football_games(date_str):
                 gh, ga = 0, 0
 
             rating = football_score_fallback(gh, ga) if finished else None
+            stats_payload = {}
+
+            if finished:
+                understat_match = get_understat_match(league_code, date_str, home_name, away_name)
+                if understat_match is not None:
+                    xg_home = understat_match["xg_home"]
+                    xg_away = understat_match["xg_away"]
+                    shots_total = get_shots_for_match(understat_match["id"])
+
+                    if shots_total is not None:
+                        rating = football_score_with_stats(
+                            gh, ga, shots_total, xg_home + xg_away, fouls_total=0
+                        )
+                        stats_payload = {
+                            "xg_home": xg_home, "xg_away": xg_away, "shots_total": shots_total,
+                        }
+                    else:
+                        rating = football_score_with_xg(gh, ga, xg_home, xg_away)
+                        stats_payload = {"xg_home": xg_home, "xg_away": xg_away}
 
             games.append({
                 "id": f"fb-{event.get('id')}",
@@ -81,7 +101,7 @@ def fetch_football_games(date_str):
                 "score_home": gh,
                 "score_away": ga,
                 "rating": rating,
-                "stats": {},
+                "stats": stats_payload,
             })
 
         time.sleep(0.3)  # ввічлива пауза між запитами до різних ліг
