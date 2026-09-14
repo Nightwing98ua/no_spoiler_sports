@@ -36,3 +36,16 @@ def football_score_fallback(home_goals, away_goals):
     diff = abs(home_goals - away_goals)
     score = goals * 1.7 - diff ** 1.3
     return round(score, 2)
+
+
+def football_score_with_xg(home_goals, away_goals, xg_home, xg_away):
+    """
+    Використовується, коли є xG (від Understat), але немає ударів/фолів.
+    Високий сумарний xG означає багато гострих моментів — це і є
+    показник "цікавості" матчу, навіть якщо голів було мало.
+    """
+    goals = home_goals + away_goals
+    diff = abs(home_goals - away_goals)
+    xg_total = (xg_home or 0) + (xg_away or 0)
+    score = xg_total * 1.5 + goals * 1.7 - diff ** 1.6
+    return round(score, 2)
