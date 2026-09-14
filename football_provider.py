@@ -1,8 +1,24 @@
+import time
+
 import requests
 from config import API_FOOTBALL_BASE_URL, API_FOOTBALL_KEY, ALLOWED_FOOTBALL_LEAGUES
 from scoring import football_score_with_stats, football_score_fallback
 
 HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
+
+# Безкоштовний тариф дозволяє 10 запитів/хвилину.
+# 6.5 секунди між запитами тримає нас безпечно нижче цієї межі.
+_MIN_SECONDS_BETWEEN_REQUESTS = 6.5
+_last_request_time = 0.0
+
+
+def _throttle():
+    global _last_request_time
+    elapsed = time.time() - _last_request_time
+    wait = _MIN_SECONDS_BETWEEN_REQUESTS - elapsed
+    if wait > 0:
+        time.sleep(wait)
+    _last_request_time = time.time()
 
 
 def _safe_num(stat_dict, name):
@@ -18,6 +34,7 @@ def _safe_num(stat_dict, name):
 
 
 def _fetch_fixture_stats(fixture_id):
+    _throttle()
     resp = requests.get(
         f"{API_FOOTBALL_BASE_URL}/fixtures/statistics",
         headers=HEADERS,
@@ -35,6 +52,7 @@ def fetch_football_games(date_str):
     ЛИШЕ для завершених матчів (щоб не витрачати денний ліміт
     на матчі, що ще не почались чи йдуть наживо).
     """
+    _throttle()
     resp = requests.get(
         f"{API_FOOTBALL_BASE_URL}/fixtures",
         headers=HEADERS,
