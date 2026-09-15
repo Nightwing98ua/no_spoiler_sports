@@ -78,13 +78,13 @@ def _fetch_league_matches(slug):
     _throttle()
     url = f"{UNDERSTAT_BASE_URL}/{slug}/{season}"
     resp = requests.get(url, timeout=10, headers=_HEADERS)
-    print(f"[understat] GET {url} -> {resp.status_code}, {len(resp.text)} bytes")
+    print(f"[understat] GET {url} -> {resp.status_code}, {len(resp.text)} bytes", flush=True)
     resp.raise_for_status()
 
     match = re.search(r"var\s+datesData\s*=\s*JSON\.parse\('(.+?)'\);", resp.text)
     matches = []
     if not match:
-        print(f"[understat] datesData pattern NOT found in response for {slug}/{season}")
+        print(f"[understat] datesData pattern NOT found in response for {slug}/{season}", flush=True)
     else:
         raw = _decode_understat_json(match.group(1))
         for m in raw:
@@ -98,7 +98,7 @@ def _fetch_league_matches(slug):
                 "xg_home": float(m.get("xG", {}).get("h", 0) or 0),
                 "xg_away": float(m.get("xG", {}).get("a", 0) or 0),
             })
-        print(f"[understat] parsed {len(matches)} finished matches for {slug}/{season}")
+        print(f"[understat] parsed {len(matches)} finished matches for {slug}/{season}", flush=True)
 
     _league_cache[slug] = {"ts": now, "matches": matches}
     return matches
@@ -113,7 +113,7 @@ def get_understat_match(espn_league_code, date_str, home_name, away_name):
     try:
         matches = _fetch_league_matches(slug)
     except (requests.RequestException, ValueError) as e:
-        print(f"[understat] failed to fetch league {slug}: {e}")
+        print(f"[understat] failed to fetch league {slug}: {e}", flush=True)
         return None
 
     target_home = _normalize_name(home_name)
@@ -125,7 +125,7 @@ def get_understat_match(espn_league_code, date_str, home_name, away_name):
                 return m
 
     print(f"[understat] no match found for {home_name} vs {away_name} on {date_str} "
-          f"(checked {len(matches)} matches in {slug})")
+          f"(checked {len(matches)} matches in {slug})", flush=True)
     return None
 
 
